@@ -72,7 +72,7 @@ class AsteriaCalculator(FuncSimiCalculator):
             config.num_classes,
             self.device
         )
-        checkpoint = torch.load(config.resume, map_location=self.device)
+        checkpoint = torch.load(config.resume, map_location=self.device, weights_only=False)
         model.load_state_dict(checkpoint['model'])
         return model
 
