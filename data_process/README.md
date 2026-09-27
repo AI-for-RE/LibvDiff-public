@@ -6,13 +6,36 @@ In this document, we illustrate how we generate all features in LibvDiff which i
 - version differences 
 - version coordinates
 
+## Dataset Layout
+Binaries live in `data_process/dataset` under one directory per OSS project, library, version and
+library variant:
+
+```
+dataset/<oss>/<library>/<version>/<variant>/<library>-<version>_<variant>.so
+```
+
+where a variant is the point in the space of compilation settings the binary was built with:
+
+```
+<compiler>_<compiler version>_<arch>_<bitness>_<optimization>      e.g. gcc_13_x86_64_O2
+```
+
+For example, `dataset/freetype/libfreetype/VER-2-11-0/gcc_13_x86_64_O2/libfreetype-VER-2-11-0_gcc_13_x86_64_O2.so`.
+The generated features of a binary are written next to it, inside its variant directory.
+
+Only the versions listed in `features/<oss>/sorted_versions.json` are processed, and only the
+architectures listed in `SUPPORTED_ARCHES` (`utils/dataset_layout.py`) are — PPC and 32-bit X86
+binaries are skipped for now. `utils/bindiff_types.py` parses and formats variant IDs.
+
 ## Binary Features
 There are three types of binary features used in LibvDiff:
 - basic features: function names (including exports), string literals
 - function embeddings
 - anchor paths
 
-Two main python scripts are used to generate binary features.
+Two main python scripts are used to generate binary features. Both process every variant of every
+version of every library of the OSS, and take an optional `--lib` to restrict them to one library
+of a project providing several.
 ```shell
 python feature_generator.py -o freetype  
 python feat_encoding.py -o freetype
@@ -36,3 +59,9 @@ Version coordinates are generated with `vct_generator.py`, you have to generate 
 ```shell
 python vct_generator.py -o freetype
 ```
+
+Both generators read the software level features of one build per version, the same build for
+every version of a library. Pass `-v/--variant` to choose which one, e.g. `-v gcc_13_x86_64_O2`;
+without it they read the `DEFAULT_VARIANT` of `utils/dataset_layout.py`, currently
+`clang_22_arm64_64_O2`. There is no fallback to another build: a version that was not built as
+the requested variant aborts the run.

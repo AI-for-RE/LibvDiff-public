@@ -11,8 +11,12 @@ from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict, OrderedDict
 from pydriller import Git, Repository
+from utils.bindiff_types import parse_variant
 from utils.data_prepare import load_software_level_feature
-from utils.tool_function import read_json, write_json, get_tags_by_repo
+from utils.dataset_layout import (DEFAULT_VARIANT, iter_library_dirs, iter_version_dirs,
+                                  resolve_variant_dir)
+from utils.tool_function import (read_json, write_json, get_tags_by_repo,
+                                 tolerate_missing_submodule_objects)
 
 
 def make_version_pairs(comp_versions):
@@ -40,20 +44,15 @@ class VDCSGenerator(object):
         self.version_diff_path = None
         self.source_code_path = None
 
-    @staticmethod
-    def load_oss_level_feature(basic_feat_dir):
+    def load_oss_level_feature(self, basic_feat_dir, variant=None):
         version2lib2func_names = defaultdict(dict)
         version2lib2strings = defaultdict(dict)
 
-        for lib_path in basic_feat_dir.iterdir():
+        for lib_path in iter_library_dirs(basic_feat_dir):
             lib = lib_path.name
-            for ver_path in lib_path.joinpath('ARM/O2/').iterdir():
-                if ver_path.name.startswith('.'):
-                    continue
-                version = ver_path.name
-                if ver_path.is_file():
-                    continue
-                func_names, strings = load_software_level_feature(home_path=ver_path, func_name_only=False)
+            for version, ver_path in iter_version_dirs(lib_path):
+                variant_path = resolve_variant_dir(ver_path, variant)
+                func_names, strings = load_software_level_feature(home_path=variant_path, func_name_only=False)
                 version2lib2strings[version][lib] = strings['strings_in_rodata']
                 version2lib2func_names[version][lib] = func_names['func_names']
         return version2lib2func_names, version2lib2strings
@@ -128,6 +127,7 @@ class VDCSGenerator(object):
         :return:
         """
         self.logger.info('Generating adjacent version pairs changed methods...')
+        tolerate_missing_submodule_objects()
 
         adj_vp2func_diff_save_path = self.version_diff_path.joinpath('adj_vp2changed_methods.json')
         adj_vp2str_diff_save_path = self.version_diff_path.joinpath('adj_vp2changed_strs.json')
@@ -225,7 +225,13 @@ class VDCSGenerator(object):
                                 allow_versions=allow_versions,
                                 tag_pattern=tag_pattern)
 
-    def run(self, oss, src_code_path, basic_feat_dir, version_diff_path, func_diff=True, str_diff=True):
+    def run(self, oss, src_code_path, basic_feat_dir, version_diff_path, func_diff=True, str_diff=True,
+            variant=None):
+        """
+        :param variant: the library variant to read the function names and strings of every
+            version with, defaults to DEFAULT_VARIANT. A version that was not built as it
+            aborts the run
+        """
         self.logger.info(f"Generating VDCS for {oss}")
         self.version_diff_path = Path(version_diff_path)
         self.func_diff, self.str_diff = func_diff, str_diff
@@ -233,7 +239,7 @@ class VDCSGenerator(object):
         self.source_code_path = Path(src_code_path)
         assert self.source_code_path.exists(), f"source code path not exist"
         version2lib2func_names, version2lib2strings = self.load_oss_level_feature(
-            basic_feat_dir=Path(basic_feat_dir))
+            basic_feat_dir=Path(basic_feat_dir), variant=variant)
         self.tags = read_json(self.version_diff_path.parent.joinpath('sorted_versions.json'))
         # self.tags = self.get_sorted_versions(allow_versions=version2lib2func_names.keys())
         # self.tags = sorted(list(version2lib2func_names.keys()))
@@ -261,6 +267,11 @@ def main():
     generator = VDCSGenerator()
     args = ArgumentParser()
     args.add_argument('-o', '--oss', default='freetype', help='oss')
+    args.add_argument('-v', '--variant', required=True,
+                      help='library variant to read the function names and strings of every '
+                           'version with '
+                           '(<compiler>_<compiler_version>_<arch>_<bitness>_<optimization>, '
+                           f'e.g. gcc_13_x86_64_O0), defaults to {DEFAULT_VARIANT}')
     arg = args.parse_args()
 
     generator.run(oss=arg.oss,
@@ -268,7 +279,8 @@ def main():
                   basic_feat_dir=Path(f'dataset/{arg.oss}/'),
                   version_diff_path=Path(f'features/{arg.oss}/version-diff'),
                   func_diff=True,
-                  str_diff=True)
+                  str_diff=True,
+                  variant=parse_variant(arg.variant) if arg.variant else None)
 
 if __name__ == '__main__':
     main()

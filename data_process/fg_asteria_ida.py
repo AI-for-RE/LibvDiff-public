@@ -325,6 +325,12 @@ class ASTGenerator(object):
                 'errmsg': "Can not decompile of func: {}".format(func_name)
             }
 
+        if cfunc == None:
+            return {
+                'errcode': 2,
+                'errmsg': 'Decompile returned None func for func: {}'.format(func_name)
+            }
+
         visitor = CTreeVisitor(cfunc)
         visitor.apply_to(cfunc.body, None)
         # 获取邻接矩阵、op序列，数值字符串不变量等一系列数据

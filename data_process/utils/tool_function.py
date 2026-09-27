@@ -129,10 +129,12 @@ def get_bin_info(bin_path: Union[str, Path]):
             msg = execute_res['errmsg']
             if 'ARM' in msg:
                 bin_info['arch'] = "ARM"
-            elif 'PowerPC' in msg:
-                bin_info['arch'] = "PPC"
-            elif '386' in msg:
-                bin_info['arch'] = "386"
+            # PPC and 32-bit X86 are not supported at the moment, re-enable these branches
+            # when they are.
+            # elif 'PowerPC' in msg:
+            #     bin_info['arch'] = "PPC"
+            # elif '386' in msg:
+            #     bin_info['arch'] = "386"
             elif 'MIPS' in msg:
                 bin_info['arch'] = 'MIPS'
             elif 'x86-64' in msg:
@@ -179,6 +181,32 @@ def get_tags_by_repo(source_code_path, allow_versions=None, tag_pattern=None):
     if allow_versions:
         return [tag for tag in ordered_tags if tag in allow_versions]
     return ordered_tags
+
+
+def tolerate_missing_submodule_objects():
+    # Hacky fix that changes pydriller's Commit class's _get_undecoded_content
+    # method to not raise a ValueError but instead return None if it can't find a commit
+    # SHA. This allows it to continue iterating through commits which updated a submodule,
+    # skipping submodule updates (which were raising errors).
+    # This is tolerable for freetype because its submodule does not affect release binaries.
+    # This might change for other OSS projects though.
+
+    from pydriller.domain.commit import Commit
+
+    if getattr(Commit, '_tolerates_missing_objects', False):
+        return
+
+    original_get_undecoded_content = Commit._get_undecoded_content
+
+    def _get_undecoded_content(self, diff):
+        try:
+            return original_get_undecoded_content(self, diff)
+        except ValueError:
+            # submodule指针指向的对象不在父仓库中
+            return None
+
+    Commit._get_undecoded_content = _get_undecoded_content
+    Commit._tolerates_missing_objects = True
 
 
 def get_md5(string: Union[str, Path]):

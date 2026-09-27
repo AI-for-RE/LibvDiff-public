@@ -8,8 +8,8 @@ import torch
 PLATFORM = sys.platform
 
 if PLATFORM.startswith('linux'):
-    IDA64_PATH = Path('/root/idapro-7.5/idat64')
-    IDA_PATH = Path('/root/idapro-7.5/idat')
+    IDA64_PATH = Path('/home/users/u7483264/ida-classroom-9.4/idat')
+    IDA_PATH = Path('/home/users/u7483264/ida-classroom-9.4/idat')
     IS_LINUX = True
 elif PLATFORM.startswith('win'):
     IDA64_PATH = Path('D:/ida7.5/ida64.exe')

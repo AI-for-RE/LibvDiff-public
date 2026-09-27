@@ -12,8 +12,9 @@ from cptools import LogHandler
 
 from utils.tool_function import get_bin_info, execute_cmd, read_pickle, read_json, write_json
 from utils.multi_process import generate_by_multi_bins
+from utils.dataset_layout import iter_binaries
 from call_gath_generator import get_anchor_func_path
-from settings import IDA64_PATH, IDA_PATH, IS_LINUX, SKIP_SUFFIX, PASS_EXIST
+from settings import IDA64_PATH, IDA_PATH, IS_LINUX, PASS_EXIST
 
 
 class FeatGenerator(object):
@@ -280,26 +281,14 @@ class FeatGenerator(object):
         self.logger.info('Feature generation finished')
 
 
-def load_bin_paths(oss):
-    bin_paths = []
-    dataset_path = Path(__file__).parent.joinpath('dataset')
-    sorted_versions = read_json(dataset_path.parent.joinpath(f'features/{oss}/sorted_versions.json'))
-    for oss_path in dataset_path.iterdir():
-        if oss_path.name != oss:
-            continue
-        for lib_path in oss_path.iterdir():
-            for arch_path in lib_path.iterdir():
-                for opt_path in arch_path.iterdir():
-                    for ver_path in opt_path.iterdir():
-                        if ver_path.name not in sorted_versions:
-                            continue
-                        try:
-                            bin_path = [path for path in ver_path.iterdir() if path.suffix not in SKIP_SUFFIX][0]
-                        except IndexError:
-                            continue
-                        bin_paths.append(bin_path)
-
-    return bin_paths
+def load_bin_paths(oss, lib=None, dataset_path=None):
+    """
+    Collect every binary of an OSS project: one per variant of every version.
+    """
+    home_path = Path(__file__).parent
+    dataset_path = Path(dataset_path) if dataset_path else home_path.joinpath('dataset')
+    sorted_versions = read_json(home_path.joinpath(f'features/{oss}/sorted_versions.json'))
+    return list(iter_binaries(dataset_path.joinpath(oss), lib=lib, versions=sorted_versions))
 
 
 def main():
@@ -307,8 +296,10 @@ def main():
     feat_generator = FeatGenerator(process_num=16, pass_exist=PASS_EXIST)
     args = ArgumentParser()
     args.add_argument('-o', '--oss', default='freetype', help='oss')
+    args.add_argument('-l', '--lib', default=None,
+                      help='only generate the features of this library of the oss')
     arg = args.parse_args()
-    bin_paths = load_bin_paths(oss=arg.oss)
+    bin_paths = load_bin_paths(oss=arg.oss, lib=arg.lib)
     feat_generator.run(bin_paths)
 
 

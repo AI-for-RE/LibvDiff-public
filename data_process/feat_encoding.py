@@ -34,7 +34,7 @@ class FeatEncoder(object):
         self.model_calculators = load_model(device=torch.device(f'cuda:{cuda_id}'))
 
     @staticmethod
-    def encode_asteria_feature(asteria, feat_path, encode_path):
+    def encode_asteria_feature(asteria, feat_path, encode_path, overwrite = False):
         """
         Embed asteria features into vectors
         :param asteria:
@@ -47,7 +47,7 @@ class FeatEncoder(object):
             'feat_path': str(feat_path),
             'embed_path': str(encode_path)
         }
-        if encode_path.exists():
+        if encode_path.exists() and not overwrite:
             return {
                 'errcode': 0,
                 'errmsg': 'exist'
@@ -114,12 +114,14 @@ def main():
     # python feat_encoding.py -i 0 -l 0 -r 2 and python feat_encoding.py -i 1 -l 2
     args = argparse.ArgumentParser()
     args.add_argument('-o', '--oss', default='freetype', help='oss')
+    args.add_argument('-b', '--lib', default=None, help='only encode this library of the oss')
     args.add_argument('-i', '--cuda_id', default=0, help='cuda id')
     args.add_argument('-l', '--left', default=0, help='The left index of binary paths')
     args.add_argument('-r', '--right', default=-1, help='The right index of binary paths')
+    #args.add_argument('--overwrite', action="store_true", help="Whether to start over Asteria embeddings from scratch.")
     arg = args.parse_args()
     feat_encoder = FeatEncoder(cuda_id=arg.cuda_id)
-    bin_paths = load_bin_paths(oss=arg.oss)
+    bin_paths = load_bin_paths(oss=arg.oss, lib=arg.lib)
     left_index = int(arg.left)
     right_index = int(arg.right) if int(arg.right) > 0 else len(bin_paths) + 1
     feat_encoder.run(bin_paths[left_index:right_index])

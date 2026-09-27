@@ -15,7 +15,10 @@ from collections import defaultdict
 import pandas as pd
 
 from data_process.vct_generator import VCTGenerator
+from data_process.utils.bindiff_types import parse_variant
 from data_process.utils.data_prepare import load_bin_features
+from data_process.utils.dataset_layout import (DEFAULT_VARIANT, iter_variant_dirs, iter_version_dirs,
+                                               list_variants, resolve_library_dir)
 from data_process.utils.tool_function import read_json
 from data_process.feat_encoding import load_model
 
@@ -39,52 +42,47 @@ OSS2LIB = {
 SAVE_DIR = Path('saved/libvdiff_idf_all_res')
 SAVE_DIR.mkdir(exist_ok=True, parents=True)
 
-ALL_OPT = ['O0', 'O1', 'O2', 'O3']
-ALL_ARCH = ['ARM', 'X86', 'PPC', 'X64']
 
+def prepare_features(lib_path, options, versions=None):
+    """
+    Load the binary features of every requested variant of every requested version.
 
-def prepare_cross_optim_features(oss, lib, arch, versions=None):
+    An option is the ID of a library variant directory, i.e. str(Variant), for example
+    'gcc_13_x86_64_O2'. Every requested version has to have been built as every requested
+    option, so that the experiment compares the same builds over all of them.
+    """
     option2ver2bin_feats = defaultdict(dict)
 
-    for opt in ALL_OPT:
-        prj_path = DATASET_PATH.joinpath(f'{oss}/{lib}/{arch}/{opt}/')
-        for version_path in prj_path.iterdir():
-            if version_path.name.startswith('.'):
+    options = set(options)
+    for version, version_path in iter_version_dirs(lib_path, versions):
+        built = set()
+        for variant, variant_path in iter_variant_dirs(version_path):
+            if str(variant) not in options:
                 continue
-            if versions and version_path.name not in versions:
-                continue
-            option2ver2bin_feats[f"{arch}-{opt}"][version_path.name] = load_bin_features(version_path)
+            built.add(str(variant))
+            option2ver2bin_feats[str(variant)][version] = load_bin_features(variant_path)
+        missing = options.difference(built)
+        if missing:
+            raise FileNotFoundError(f'{lib_path.name}-{version} was not built as '
+                                    f'{", ".join(sorted(missing))}')
     return option2ver2bin_feats
 
 
-def prepare_cross_arch_features(oss, lib, opt, versions=None):
-    option2ver2bin_feats = defaultdict(dict)
+def resolve_lib(oss, lib=None):
+    """
+    Locate the directory of the library to identify versions of.
 
-    for arch in ALL_ARCH:
-        prj_path = DATASET_PATH.joinpath(f'{oss}/{lib}/{arch}/{opt}/')
-        for version_path in prj_path.iterdir():
-            if version_path.name.startswith('.'):
-                continue
-            if versions and version_path.name not in versions:
-                continue
-            option2ver2bin_feats[f"{arch}-{opt}"][version_path.name] = load_bin_features(version_path)
-    return option2ver2bin_feats
-
-
-def prepare_cross_both_features(oss, lib, versions=None):
-    option2ver2bin_feats = defaultdict(dict)
-
-    for option in ['ARM-O2', 'X86-O0', 'X86-O1', 'X86-O3', 'X64-O0', 'X64-O1', 'X64-O3', 'PPC-O0', 'PPC-O1',
-                   'PPC-O3']:
-        arch, opt = option.split('-')
-        prj_path = DATASET_PATH.joinpath(f'{oss}/{lib}/{arch}/{opt}/')
-        for version_path in prj_path.iterdir():
-            if version_path.name.startswith('.'):
-                continue
-            if versions and version_path.name not in versions:
-                continue
-            option2ver2bin_feats[f"{arch}-{opt}"][version_path.name] = load_bin_features(version_path)
-    return option2ver2bin_feats
+    The OSS2LIB mapping is only a hint: a project may ship its library under a different name
+    (libpng builds libpng16, for instance), in which case the library is resolved from the
+    dataset instead.
+    """
+    oss_path = DATASET_PATH.joinpath(oss)
+    if lib:
+        return resolve_library_dir(oss_path, lib)
+    try:
+        return resolve_library_dir(oss_path, OSS2LIB.get(oss))
+    except FileNotFoundError:
+        return resolve_library_dir(oss_path)
 
 
 def load_vd(oss, lib):
@@ -103,43 +101,84 @@ def load_vd(oss, lib):
     return func_diffs, str_diffs
 
 
-def prepare_features_and_options(versions, oss, lib, exp):
+def make_option_pairs(exp, base_variant, variants):
+    """
+    Build the (base option, target option) pairs an experiment compares.
+
+    Every experiment except cross_all is anchored on `base_variant`: it holds the variance
+    attributes the experiment is not exercising fixed at that variant's values, so e.g.
+    cross_optim compares builds of one compiler and one architecture against each other.
+    """
     if exp == "cross_optim":
-        arch = "ARM"
-        option2ver2bin_feats = prepare_cross_optim_features(oss=oss, lib=lib, arch=arch, versions=versions)
-        all_options = []
-        for base_opt in ALL_OPT:
-            for pred_opt in ALL_OPT:
-                if base_opt == pred_opt:
-                    continue
-                all_options.append((f"{arch}-{base_opt}", f"{arch}-{pred_opt}"))
+        # Same compiler and architecture, every combination of two optimization levels
+        candidates = [variant for variant in variants
+                      if (variant.compiler, variant.compiler_version) == (base_variant.compiler,
+                                                                          base_variant.compiler_version)
+                      and (variant.arch, variant.bit) == (base_variant.arch, base_variant.bit)]
+        distinguisher = lambda variant: variant.optimization
     elif exp == "cross_arch":
-        opt = "O2"
-        option2ver2bin_feats = prepare_cross_arch_features(oss=oss, lib=lib, opt=opt, versions=versions)
-        all_options = []
-        for base_arch in ALL_ARCH:
-            for pred_arch in ALL_ARCH:
-                if base_arch == pred_arch:
-                    continue
-                all_options.append((f"{base_arch}-{opt}", f"{pred_arch}-{opt}"))
-
+        # Same compiler and optimization level, every combination of two architectures
+        candidates = [variant for variant in variants
+                      if (variant.compiler, variant.compiler_version) == (base_variant.compiler,
+                                                                          base_variant.compiler_version)
+                      and variant.optimization == base_variant.optimization]
+        distinguisher = lambda variant: (variant.arch, variant.bit)
+    elif exp == "cross_compiler":
+        # Same architecture and optimization level, every combination of two compilers
+        candidates = [variant for variant in variants
+                      if (variant.arch, variant.bit) == (base_variant.arch, base_variant.bit)
+                      and variant.optimization == base_variant.optimization]
+        distinguisher = lambda variant: (variant.compiler, variant.compiler_version)
+    elif exp == "cross_all":
+        # Every combination of two variants, whichever attributes they differ in
+        candidates = list(variants)
+        distinguisher = lambda variant: str(variant)
     else:
-        option2ver2bin_feats = prepare_cross_both_features(oss=oss, lib=lib, versions=versions)
-        all_options = [('ARM-O2', 'X86-O0'), ('ARM-O2', 'X86-O1'), ('ARM-O2', 'X86-O3'),
-                       ('ARM-O2', 'X64-O0'), ('ARM-O2', 'X64-O1'), ('ARM-O2', 'X64-O3'),
-                       ('ARM-O2', 'PPC-O0'), ('ARM-O2', 'PPC-O1'), ('ARM-O2', 'PPC-O3'), ]
-    return option2ver2bin_feats, all_options
+        # base_compare: the base variant against all variant builds
+        return [(str(base_variant), str(variant)) for variant in variants]
+
+    all_options = []
+    for base in candidates:
+        for target in candidates:
+            if distinguisher(base) == distinguisher(target):
+                continue
+            all_options.append((str(base), str(target)))
+    return all_options
 
 
-def main(oss, cvf, apf, exp):
-    lib = OSS2LIB[oss]
+def prepare_features_and_options(versions, lib_path, exp, base_variant=None):
+    variants = list_variants(lib_path, versions)
+    if not variants:
+        raise FileNotFoundError(f'can not find any supported library variant in {lib_path}')
+    if base_variant is None:
+        base_variant = DEFAULT_VARIANT
+    if not any(variant == base_variant for variant in variants):
+        available = ', '.join(str(variant) for variant in variants)
+        raise FileNotFoundError(f'can not find variant {base_variant} in {lib_path}, '
+                                f'available variants: {available}')
+
+    all_options = make_option_pairs(exp, base_variant, variants)
+    if not all_options:
+        raise ValueError(f'{exp} needs library variants differing from the base variant '
+                         f'{base_variant}, none of the variants built qualify')
+    used_options = {option for pair in all_options for option in pair}
+    print(f'[+] base variant: {base_variant}, comparing {len(used_options)} variants '
+          f'over {len(all_options)} option pairs')
+    option2ver2bin_feats = prepare_features(lib_path, used_options, versions=versions)
+    return option2ver2bin_feats, all_options, base_variant
+
+
+def main(oss, cvf, apf, exp, lib=None, variant=None):
+    lib_path = resolve_lib(oss, lib)
+    lib = lib_path.name
     Asteria = load_model()
     print(f"oss:{oss}, lib: {lib}, cvf: {cvf}, apf: {apf}, exp:{exp}")
     sorted_versions = read_json(FEATURE_PATH.joinpath(f"{oss}/sorted_versions.json"))
-    option2ver2bin_feats, all_options = prepare_features_and_options(sorted_versions, oss, lib, exp)
+    option2ver2bin_feats, all_options, variant = prepare_features_and_options(sorted_versions, lib_path,
+                                                                             exp, base_variant=variant)
     all_vd_func, all_vd_str = load_vd(oss=oss, lib=lib)
     try:
-        df_vct = pd.read_csv(f'data_process/features/{oss}/version-diff/vct-{lib}.csv', index_col=0)
+        df_vct = pd.read_csv(FEATURE_PATH.joinpath(f'{oss}/version-diff/vct-{lib}.csv'), index_col=0)
     except FileNotFoundError:
         print(f'[-] warning can not find vct of {oss}-{lib}')
         df_vct = None
@@ -230,7 +269,9 @@ def main(oss, cvf, apf, exp):
 
     df_idf_res = pd.DataFrame(idf_datas, columns=['base_option', 'pred_option', 'true_version', 'pred_version',
                                                   'is_true', 'time_cost'])
-    save_name_prefix = f"{exp}@{oss}_{lib}"
+    # The base variant is part of the name: an experiment anchored on another one compares
+    # different builds and so produces different results
+    save_name_prefix = f"{exp}@{oss}_{lib}@{variant}"
 
     if apf and cvf:
         save_name_prefix += f"@apf@cvf"
@@ -253,14 +294,25 @@ if __name__ == '__main__':
     exp_mapping = {
         'co': 'cross_optim',
         'ca': 'cross_arch',
-        'cb': 'cross_both'
+        'cc': 'cross_compiler',
+        'cx': 'cross_all',
+        'bc': 'base_compare',
     }
 
     parser.add_argument('-o', '--oss', default='freetype', help='specify OSS to test')
+    parser.add_argument('-l', '--lib', default=None,
+                        help='specify the library of the OSS to test, required for OSS projects '
+                             'providing more than one library')
+    parser.add_argument('-v', '--variant', default=None,
+                        help='base library variant of the experiment '
+                             '(<compiler>_<compiler_version>_<arch>_<bitness>_<optimization>, '
+                             f'e.g. gcc_13_x86_64_O2), defaults to {DEFAULT_VARIANT}')
     parser.add_argument('-c', '--cvf', action='store_true', help='Turn on cvf')
     parser.add_argument('-a', '--apf', action='store_true', help='Turn on apf')
-    parser.add_argument('-e', '--exp', default='co',
-                        help='Experiment (co: cross optimization, ca: cross architecture, cb: cross both)')
+    parser.add_argument('-e', '--exp', default='co', choices=sorted(exp_mapping.keys()),
+                        help='Experiment (co: cross optimization, ca: cross architecture, '
+                             'cc: cross compiler, cb: cross both architecture and optimization, '
+                             'cx: cross all variants)')
 
     args = parser.parse_args()
     if CVF_ON is not None:
@@ -268,4 +320,5 @@ if __name__ == '__main__':
     if AP_ON is not None:
         args.apf = AP_ON
 
-    main(oss=args.oss, cvf=args.cvf, apf=args.apf, exp=exp_mapping[args.exp])
+    main(oss=args.oss, cvf=args.cvf, apf=args.apf, exp=exp_mapping[args.exp], lib=args.lib,
+         variant=parse_variant(args.variant) if args.variant else None)
