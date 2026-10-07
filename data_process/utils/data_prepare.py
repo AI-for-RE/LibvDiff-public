@@ -22,7 +22,7 @@ def load_software_level_feature(home_path, func_name_only=False):
     return func_names, strings
 
 
-def load_bin_features(bin_home_path, only_basic=False):
+def load_bin_features(bin_home_path, model_id, only_basic=False):
     """
     Load software level and function level features in bin_home_path
     :param bin_home_path:
@@ -40,7 +40,11 @@ def load_bin_features(bin_home_path, only_basic=False):
         return bin_feats
     # self.logger.info(f'Loading function level features: {bin_home_path}')
     try:
-        bin_feats['embed_info'] = read_pickle(bin_home_path.joinpath('Asteria_embeddings.pkl'))
+        bin_feats['embed_info'] = read_pickle(bin_home_path.joinpath(f'{model_id}_embeddings.pkl'))
+        for info in bin_feats['embed_info'].values():
+            emb = info['embedding']
+            if hasattr(emb, 'detach'):  # HermesSim stores torch tensors
+                info['embedding'] = emb.detach().cpu().numpy()
     except FileNotFoundError:
         bin_feats['embed_info'] = None
     try:

@@ -11,15 +11,20 @@ from tqdm import tqdm
 from cptools import LogHandler
 
 from settings import DEVICE, MODEL_PATH, MODEL_ARGS_PATH
-from utils.similarity import AsteriaCalculator
+from utils.similarity import AsteriaCalculator, HermesSimCalculator
 from utils.tool_function import read_pickle, write_pickle
 
 
-def load_model(device=DEVICE):
-    print(f'load model from {MODEL_PATH}, device is {DEVICE}')
-    args = read_pickle(MODEL_ARGS_PATH)
-    args.resume = MODEL_PATH
-    return AsteriaCalculator(config=args, device=device)
+def load_model(model_id, device=DEVICE):
+    match model_id:
+        case "Asteria":
+            print(f'load model from {MODEL_PATH}, device is {DEVICE}')
+            args = read_pickle(MODEL_ARGS_PATH)
+            args.resume = MODEL_PATH
+            return AsteriaCalculator(config=args, device=device)
+        case "HermesSim":
+            print(f'instantiate HermesSim calculator, device is {DEVICE}')
+            return HermesSimCalculator(config=None, device=device)
 
 
 class FeatEncoder(object):
@@ -31,7 +36,7 @@ class FeatEncoder(object):
         :return:
         """
         self.logger = LogHandler('FeatEncoder')
-        self.model_calculators = load_model(device=torch.device(f'cuda:{cuda_id}'))
+        self.model_calculators = load_model("Asteria", device=torch.device(f'cuda:{cuda_id}'))
 
     @staticmethod
     def encode_asteria_feature(asteria, feat_path, encode_path, overwrite = False):

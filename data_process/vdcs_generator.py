@@ -267,7 +267,7 @@ def main():
     generator = VDCSGenerator()
     args = ArgumentParser()
     args.add_argument('-o', '--oss', default='freetype', help='oss')
-    args.add_argument('-v', '--variant', required=True,
+    args.add_argument('-v', '--variant', default=str(DEFAULT_VARIANT),
                       help='library variant to read the function names and strings of every '
                            'version with '
                            '(<compiler>_<compiler_version>_<arch>_<bitness>_<optimization>, '

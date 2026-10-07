@@ -56,6 +56,22 @@ class FuncSimiCalculator(object):
         """
         raise NotImplementedError
 
+class HermesSimCalculator(FuncSimiCalculator):
+
+    def __init__(self, device=torch.device("cuda:0"), **kwargs):
+        self.device = device
+        super(HermesSimCalculator, self).__init__(**kwargs)
+
+    def load_model(self, config, **kwargs):
+        # There is nothing to load. The func_embedding method is never used
+        # externally, so we don't need to be able to dynamically embed functions.
+        return None
+
+    # This is the only function that is actually called externally right now.
+    def get_simi_by_embedding(self, embedding1, embedding2):
+        embedding1 = torch.Tensor(embedding1).to(self.device)
+        embedding2 = torch.Tensor(embedding2).to(self.device)
+        return torch.nn.functional.cosine_similarity(embedding1, embedding2).cpu().numpy()
 
 class AsteriaCalculator(FuncSimiCalculator):
 
